@@ -5,19 +5,27 @@
         "title": "Link your Minecraft Server",
         "description": "Set up your Minecraft Server instance to allow monitoring.",
         "data": {
-          "name": "[%key:common::config_flow::data::name%]",
-          "host": "[%key:common::config_flow::data::host%]"
+          "address": "Server address"
         }
       }
     },
     "error": {
       "invalid_port": "Port must be in range from 1024 to 65535. Please correct it and try again.",
-      "cannot_connect": "Failed to connect to server. Please check the host and port and try again. Also ensure that you are running at least Minecraft version 1.7 on your server.",
-      "invalid_ip": "IP address is invalid (MAC address could not be determined). Please correct it and try again."
-    },
-    "abort": {
-      "already_configured": "[%key:common::config_flow::abort::already_configured_service%]"
+      "cannot_connect": "Failed to connect to server. Please check the server address and try again. If your server is running Minecraft Java Edition, ensure that it is at least version 1.7."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Minecraft Server options",
+        "description": "Configure Minecraft Server integration",
+        "data": {
+          "query_enabled": "Enable query protocol (use only if 'enable-query=true' is set on the server)",
+          "scan_interval": "Update interval"
+        }
+      }
+    },
+    "error": {}
   },
   "entity": {
     "binary_sensor": {
@@ -42,7 +50,16 @@
         "name": "Players max"
       },
       "motd": {
-        "name": "World message"
+        "name": "MOTD"
+      },
+      "edition": {
+        "name": "Edition"
+      },
+      "map_name": {
+        "name": "Map name"
+      },
+      "game_mode": {
+        "name": "Game mode"
       }
     }
   }

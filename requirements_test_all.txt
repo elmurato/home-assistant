@@ -196,7 +196,6 @@ aiocomelit==0.0.5
 aiodiscover==1.4.16
 
 # homeassistant.components.dnsip
-# homeassistant.components.minecraft_server
 aiodns==3.0.0
 
 # homeassistant.components.eafm
@@ -673,7 +672,6 @@ georss-qld-bushfire-alert-client==0.5
 
 # homeassistant.components.dlna_dmr
 # homeassistant.components.kef
-# homeassistant.components.minecraft_server
 # homeassistant.components.nmap_tracker
 # homeassistant.components.samsungtv
 # homeassistant.components.upnp
@@ -900,7 +898,7 @@ maxcube-api==0.4.3
 mbddns==0.1.2
 
 # homeassistant.components.minecraft_server
-mcstatus==11.0.0
+mcstatus==11.0.1
 
 # homeassistant.components.meater
 meater-python==0.0.8
