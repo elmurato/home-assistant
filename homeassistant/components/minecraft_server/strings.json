@@ -10,10 +10,12 @@
       "reconfigure": {
         "data": {
           "address": "[%key:component::minecraft_server::config::step::user::data::address%]",
+          "query_port": "[%key:component::minecraft_server::config::step::user::data::query_port%]",
           "type": "[%key:component::minecraft_server::config::step::user::data::type%]"
         },
         "data_description": {
           "address": "[%key:component::minecraft_server::config::step::user::data_description::address%]",
+          "query_port": "[%key:component::minecraft_server::config::step::user::data_description::query_port%]",
           "type": "[%key:component::minecraft_server::config::step::user::data_description::type%]"
         },
         "description": "Update the configuration for your Minecraft server."
@@ -21,10 +23,12 @@
       "user": {
         "data": {
           "address": "Server address",
+          "query_port": "Query port",
           "type": "Server edition"
         },
         "data_description": {
           "address": "The hostname, IP address or SRV record of your Minecraft server, optionally including the port.",
+          "query_port": "Only for Java Edition. The UDP port of the query protocol, if it differs from the server port. The query protocol is detected automatically and provides additional data. It requires 'enable-query=true' in the server.properties.",
           "type": "For Java Edition beta version 1.8 till release version 1.6.4, select 'Legacy Java Edition'.\nFor Java Edition release version 1.7+, select 'Java Edition'.\nFor all Bedrock Edition versions, select 'Bedrock Edition'."
         },
         "description": "Set up your Minecraft Server instance to allow monitoring.\n\nSelect the server edition and server address.",
@@ -62,6 +66,9 @@
       },
       "protocol_version": {
         "name": "Protocol version"
+      },
+      "software": {
+        "name": "Software"
       },
       "version": {
         "name": "Version"

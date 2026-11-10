@@ -4,6 +4,7 @@ from mcstatus.responses import (
     BedrockStatusResponse,
     JavaStatusResponse,
     LegacyStatusResponse,
+    QueryResponse,
 )
 
 from homeassistant.components.minecraft_server.api import MinecraftServerData
@@ -31,6 +32,24 @@ TEST_JAVA_STATUS_RESPONSE = JavaStatusResponse.build(
         "description": "Dummy MOTD",
     },
     latency=5,
+)
+
+TEST_QUERY_PORT = 25570
+
+TEST_QUERY_RESPONSE = QueryResponse.build(
+    {
+        "hostname": "Dummy MOTD",
+        "gametype": "SMP",
+        "game_id": "MINECRAFT",
+        "version": "1.21.4",
+        "plugins": "Paper on 1.21.4: PluginA 1.0; PluginB 2.0",
+        "map": "Dummy Query Map",
+        "numplayers": "2",
+        "maxplayers": "10",
+        "hostport": str(TEST_PORT),
+        "hostip": "127.0.0.1",
+    },
+    players_list=["Query Player B", "Query Player A"],
 )
 
 TEST_JAVA_DATA = MinecraftServerData(

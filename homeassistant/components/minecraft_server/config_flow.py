@@ -10,11 +10,18 @@ from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 from homeassistant.const import CONF_ADDRESS, CONF_TYPE
 
 from .api import MinecraftServer, MinecraftServerAddressError, MinecraftServerType
-from .const import DOMAIN
+from .const import CONF_QUERY_PORT, DOMAIN
 
 DEFAULT_ADDRESS = "localhost:25565"
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _get_query_port_data(user_input: dict[str, Any]) -> dict[str, int]:
+    """Return the optional query port of the user input as config entry data."""
+    if (query_port := user_input.get(CONF_QUERY_PORT)) is None:
+        return {}
+    return {CONF_QUERY_PORT: query_port}
 
 
 class MinecraftServerConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -38,6 +45,7 @@ class MinecraftServerConfigFlow(ConfigFlow, domain=DOMAIN):
                     data={
                         CONF_ADDRESS: user_input[CONF_ADDRESS],
                         CONF_TYPE: user_input[CONF_TYPE],
+                        **_get_query_port_data(user_input),
                     },
                 )
 
@@ -57,9 +65,10 @@ class MinecraftServerConfigFlow(ConfigFlow, domain=DOMAIN):
                 return self.async_update_reload_and_abort(
                     entry,
                     title=user_input[CONF_ADDRESS],
-                    data_updates={
+                    data={
                         CONF_ADDRESS: user_input[CONF_ADDRESS],
                         CONF_TYPE: user_input[CONF_TYPE],
+                        **_get_query_port_data(user_input),
                     },
                 )
 
@@ -77,7 +86,9 @@ class MinecraftServerConfigFlow(ConfigFlow, domain=DOMAIN):
         server_address = user_input[CONF_ADDRESS]
 
         self._async_abort_entries_match({CONF_ADDRESS: server_address})
-        api = MinecraftServer(self.hass, server_type, server_address)
+        api = MinecraftServer(
+            self.hass, server_type, server_address, user_input.get(CONF_QUERY_PORT)
+        )
 
         try:
             await api.async_initialize()
@@ -126,6 +137,16 @@ class MinecraftServerConfigFlow(ConfigFlow, domain=DOMAIN):
                             CONF_ADDRESS, defaults.get(CONF_ADDRESS, DEFAULT_ADDRESS)
                         ),
                     ): probatio.All(str, probatio.Lower),
+                    probatio.Optional(
+                        CONF_QUERY_PORT,
+                        description={
+                            "suggested_value": user_input.get(
+                                CONF_QUERY_PORT, defaults.get(CONF_QUERY_PORT)
+                            )
+                        },
+                    ): probatio.All(
+                        probatio.Coerce(int), probatio.Range(min=1, max=65535)
+                    ),
                 }
             ),
             errors=errors,

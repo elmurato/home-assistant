@@ -9,7 +9,7 @@ import pytest
 from pytest_homeassistant.common import MockConfigEntry
 
 from homeassistant.components.minecraft_server.api import MinecraftServerType
-from homeassistant.components.minecraft_server.const import DOMAIN
+from homeassistant.components.minecraft_server.const import CONF_QUERY_PORT, DOMAIN
 from homeassistant.config_entries import SOURCE_USER
 from homeassistant.const import CONF_ADDRESS, CONF_TYPE
 from homeassistant.core import HomeAssistant
@@ -22,6 +22,7 @@ from .const import (
     TEST_JAVA_STATUS_RESPONSE,
     TEST_LEGACY_JAVA_STATUS_RESPONSE,
     TEST_PORT,
+    TEST_QUERY_PORT,
 )
 
 SERVER_EDITION_CASE_PARAM_NAMES = (
@@ -451,3 +452,96 @@ async def test_reconfiguration_flow_address_lookup_error(
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reconfigure_successful"
     assert java_mock_config_entry.data[CONF_TYPE] == server_type
+
+
+async def test_config_flow_query_port(hass: HomeAssistant) -> None:
+    """Test config entry creation with a custom query port."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+
+    with (
+        patch(
+            "homeassistant.components.minecraft_server.api.JavaServer.async_lookup",
+            return_value=JavaServer(host=TEST_HOST, port=TEST_PORT),
+        ),
+        patch(
+            "homeassistant.components.minecraft_server.api.JavaServer.async_status",
+            return_value=TEST_JAVA_STATUS_RESPONSE,
+        ),
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={
+                CONF_TYPE: MinecraftServerType.JAVA_EDITION,
+                CONF_ADDRESS: TEST_ADDRESS,
+                CONF_QUERY_PORT: TEST_QUERY_PORT,
+            },
+        )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"] == {
+        CONF_ADDRESS: TEST_ADDRESS,
+        CONF_TYPE: MinecraftServerType.JAVA_EDITION,
+        CONF_QUERY_PORT: TEST_QUERY_PORT,
+    }
+
+
+@pytest.mark.parametrize(
+    ("initial_query_port", "new_input", "expected_data"),
+    [
+        (
+            None,
+            {CONF_QUERY_PORT: TEST_QUERY_PORT},
+            {CONF_QUERY_PORT: TEST_QUERY_PORT},
+        ),
+        (TEST_QUERY_PORT, {}, {}),
+    ],
+    ids=["query_port_added", "query_port_removed"],
+)
+async def test_reconfiguration_flow_query_port(
+    hass: HomeAssistant,
+    java_mock_config_entry: MockConfigEntry,
+    initial_query_port: int | None,
+    new_input: dict[str, int],
+    expected_data: dict[str, int],
+) -> None:
+    """Test reconfiguration adds or removes the query port."""
+    java_mock_config_entry.add_to_hass(hass)
+    if initial_query_port is not None:
+        hass.config_entries.async_update_entry(
+            java_mock_config_entry,
+            data={
+                **java_mock_config_entry.data,
+                CONF_QUERY_PORT: initial_query_port,
+            },
+        )
+
+    result = await java_mock_config_entry.start_reconfigure_flow(hass)
+
+    with (
+        patch(
+            "homeassistant.components.minecraft_server.api.JavaServer.async_lookup",
+            return_value=JavaServer(host=TEST_HOST, port=TEST_PORT),
+        ),
+        patch(
+            "homeassistant.components.minecraft_server.api.JavaServer.async_status",
+            return_value=TEST_JAVA_STATUS_RESPONSE,
+        ),
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={
+                CONF_TYPE: MinecraftServerType.JAVA_EDITION,
+                CONF_ADDRESS: TEST_ADDRESS,
+                **new_input,
+            },
+        )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert java_mock_config_entry.data == {
+        CONF_ADDRESS: TEST_ADDRESS,
+        CONF_TYPE: MinecraftServerType.JAVA_EDITION,
+        **expected_data,
+    }

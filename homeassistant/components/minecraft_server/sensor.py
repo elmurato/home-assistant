@@ -21,6 +21,8 @@ from .coordinator import MinecraftServerConfigEntry, MinecraftServerCoordinator
 from .entity import MinecraftServerEntity
 
 ATTR_PLAYERS_LIST = "players_list"
+ATTR_PLUGINS = "plugins"
+ATTR_SOFTWARE_VERSION = "software_version"
 
 KEY_EDITION = "edition"
 KEY_GAME_MODE = "game_mode"
@@ -28,6 +30,7 @@ KEY_MAP_NAME = "map_name"
 KEY_PLAYERS_MAX = "players_max"
 KEY_PLAYERS_ONLINE = "players_online"
 KEY_PROTOCOL_VERSION = "protocol_version"
+KEY_SOFTWARE = "software"
 KEY_VERSION = "version"
 
 UNIT_PLAYERS_MAX = "players"
@@ -44,6 +47,7 @@ class MinecraftServerSensorEntityDescription(SensorEntityDescription):
     value_fn: Callable[[MinecraftServerData], StateType]
     attributes_fn: Callable[[MinecraftServerData], dict[str, Any]] | None
     supported_server_types: set[MinecraftServerType]
+    requires_query: bool = False
 
 
 def get_extra_state_attributes_players_list(
@@ -55,6 +59,20 @@ def get_extra_state_attributes_players_list(
 
     if players_list is not None and len(players_list) != 0:
         extra_state_attributes[ATTR_PLAYERS_LIST] = players_list
+
+    return extra_state_attributes
+
+
+def get_extra_state_attributes_software(
+    data: MinecraftServerData,
+) -> dict[str, Any]:
+    """Return software version and plugins as extra state attributes."""
+    extra_state_attributes: dict[str, Any] = {}
+
+    if data.software_version:
+        extra_state_attributes[ATTR_SOFTWARE_VERSION] = data.software_version
+    if data.plugins:
+        extra_state_attributes[ATTR_PLUGINS] = data.plugins
 
     return extra_state_attributes
 
@@ -165,6 +183,27 @@ SENSOR_DESCRIPTIONS = [
             MinecraftServerType.BEDROCK_EDITION,
         },
     ),
+    MinecraftServerSensorEntityDescription(
+        key=KEY_MAP_NAME,
+        translation_key=KEY_MAP_NAME,
+        value_fn=lambda data: data.map_name,
+        attributes_fn=None,
+        supported_server_types={
+            MinecraftServerType.JAVA_EDITION,
+        },
+        requires_query=True,
+    ),
+    MinecraftServerSensorEntityDescription(
+        key=KEY_SOFTWARE,
+        translation_key=KEY_SOFTWARE,
+        value_fn=lambda data: data.software_brand,
+        attributes_fn=get_extra_state_attributes_software,
+        supported_server_types={
+            MinecraftServerType.JAVA_EDITION,
+        },
+        entity_category=EntityCategory.DIAGNOSTIC,
+        requires_query=True,
+    ),
 ]
 
 
@@ -178,25 +217,50 @@ async def async_setup_entry(
     server_type = config_entry.data.get(CONF_TYPE, MinecraftServerType.JAVA_EDITION)
     entity_registry = er.async_get(hass)
     entities = []
+    pending_query_descriptions = []
 
     for description in SENSOR_DESCRIPTIONS:
-        if server_type in description.supported_server_types:
+        if server_type not in description.supported_server_types:
+            # Remove existing stale entity (e.g. after server type change)
+            if entity_id := entity_registry.async_get_entity_id(
+                Platform.SENSOR, DOMAIN, f"{config_entry.entry_id}-{description.key}"
+            ):
+                entity_registry.async_remove(entity_id)
+        elif description.requires_query:
+            pending_query_descriptions.append(description)
+        else:
             entities.append(
                 MinecraftServerSensorEntity(coordinator, description, config_entry)
             )
-        # Remove existing stale entity (e.g. after server type change)
-        elif entity_id := entity_registry.async_get_entity_id(
-            Platform.SENSOR, DOMAIN, f"{config_entry.entry_id}-{description.key}"
-        ):
-            entity_registry.async_remove(entity_id)
 
     async_add_entities(entities)
+
+    if not pending_query_descriptions:
+        return
+
+    @callback
+    def _async_add_query_entities() -> None:
+        """Add sensors based on the query protocol as soon as it is available."""
+        if not coordinator.data.query_available:
+            return
+
+        async_add_entities(
+            MinecraftServerSensorEntity(coordinator, description, config_entry)
+            for description in pending_query_descriptions
+        )
+        pending_query_descriptions.clear()
+        remove_listener()
+
+    remove_listener = coordinator.async_add_listener(_async_add_query_entities)
+    config_entry.async_on_unload(remove_listener)
+    _async_add_query_entities()
 
 
 class MinecraftServerSensorEntity(MinecraftServerEntity, SensorEntity):
     """Representation of a Minecraft Server sensor base entity."""
 
     entity_description: MinecraftServerSensorEntityDescription
+    _unrecorded_attributes = frozenset({ATTR_PLUGINS})
 
     def __init__(
         self,

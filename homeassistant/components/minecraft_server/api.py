@@ -1,5 +1,6 @@
 """API for the Minecraft Server integration."""
 
+import asyncio
 from dataclasses import dataclass
 from enum import StrEnum
 import logging
@@ -10,6 +11,7 @@ from mcstatus.responses import (
     BedrockStatusResponse,
     JavaStatusResponse,
     LegacyStatusResponse,
+    QueryResponse,
 )
 
 from homeassistant.core import HomeAssistant
@@ -19,6 +21,8 @@ _LOGGER = logging.getLogger(__name__)
 LOOKUP_TIMEOUT: float = 10
 DATA_UPDATE_TIMEOUT: float = 10
 DATA_UPDATE_RETRIES: int = 3
+QUERY_TIMEOUT: float = 3
+QUERY_RETRY_INTERVAL: int = 10
 
 
 @dataclass
@@ -35,6 +39,12 @@ class MinecraftServerData:
 
     # Data available only in 'Java Edition'
     players_list: list[str] | None = None
+
+    # Data available only in 'Java Edition' with enabled query protocol
+    query_available: bool = False
+    software_brand: str | None = None
+    software_version: str | None = None
+    plugins: list[str] | None = None
 
     # Data available only in 'Bedrock Edition'
     edition: str | None = None
@@ -68,10 +78,17 @@ class MinecraftServer:
     _server: BedrockServer | JavaServer | LegacyServer | None
 
     def __init__(
-        self, hass: HomeAssistant, server_type: MinecraftServerType, address: str
+        self,
+        hass: HomeAssistant,
+        server_type: MinecraftServerType,
+        address: str,
+        query_port: int | None = None,
     ) -> None:
         """Initialize server instance."""
         self._server = None
+        self._query_port = query_port
+        self._query_ever_succeeded = False
+        self._query_skip_count = 0
         self._hass = hass
         self._server_type = server_type
         self._address = address
@@ -93,6 +110,9 @@ class MinecraftServer:
             ) from error
 
         self._server.timeout = DATA_UPDATE_TIMEOUT
+
+        if self._query_port is not None and isinstance(self._server, JavaServer):
+            self._server.query_port = self._query_port
 
         _LOGGER.debug(
             "Initialized %s server instance with address '%s'",
@@ -138,6 +158,8 @@ class MinecraftServer:
 
         if isinstance(status_response, JavaStatusResponse):
             data = self._extract_java_data(status_response)
+            if isinstance(self._server, JavaServer):
+                await self._async_add_query_data(self._server, data)
         elif isinstance(status_response, BedrockStatusResponse):
             data = self._extract_bedrock_data(status_response)
         else:
@@ -164,6 +186,42 @@ class MinecraftServer:
             version=status_response.version.name,
             players_list=players_list,
         )
+
+    async def _async_add_query_data(
+        self, server: JavaServer, data: MinecraftServerData
+    ) -> None:
+        """Add data of the query protocol to the data, if the server supports it."""
+        # Servers without query support are probed only occasionally.
+        if not self._query_ever_succeeded:
+            if self._query_skip_count > 0:
+                self._query_skip_count -= 1
+                return
+            self._query_skip_count = QUERY_RETRY_INTERVAL - 1
+
+        try:
+            async with asyncio.timeout(QUERY_TIMEOUT):
+                query_response = await server.async_query(tries=1)
+        except (OSError, ValueError, KeyError) as error:
+            _LOGGER.debug(
+                "Query request to '%s' failed: %s",
+                self._address,
+                self._get_error_message(error),
+            )
+            return
+
+        self._query_ever_succeeded = True
+        self._apply_query_response(data, query_response)
+
+    def _apply_query_response(
+        self, data: MinecraftServerData, query_response: QueryResponse
+    ) -> None:
+        """Apply query response to the server data."""
+        data.query_available = True
+        data.map_name = query_response.map_name
+        data.players_list = sorted(query_response.players.list)
+        data.software_brand = query_response.software.brand
+        data.software_version = query_response.software.version
+        data.plugins = query_response.software.plugins
 
     def _extract_bedrock_data(
         self, status_response: BedrockStatusResponse

@@ -18,7 +18,7 @@ from .api import (
     MinecraftServerNotInitializedError,
     MinecraftServerType,
 )
-from .const import DOMAIN
+from .const import CONF_QUERY_PORT, DOMAIN
 
 type MinecraftServerConfigEntry = ConfigEntry[MinecraftServerCoordinator]
 
@@ -56,6 +56,7 @@ class MinecraftServerCoordinator(DataUpdateCoordinator[MinecraftServerData]):
             self.hass,
             self.config_entry.data.get(CONF_TYPE, MinecraftServerType.JAVA_EDITION),
             self.config_entry.data[CONF_ADDRESS],
+            self.config_entry.data.get(CONF_QUERY_PORT),
         )
 
         try:
