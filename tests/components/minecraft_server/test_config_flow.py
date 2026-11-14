@@ -15,11 +15,14 @@ from homeassistant.components.minecraft_server.const import (
     DOMAIN,
 )
 from homeassistant.config_entries import SOURCE_USER
-from homeassistant.const import CONF_ADDRESS, CONF_TYPE
+from homeassistant.const import CONF_ADDRESS, CONF_TYPE, STATE_UNAVAILABLE, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.helpers import entity_registry as er
 
 from .const import (
+    ENTITY_ID_MAP_NAME,
+    ENTITY_ID_SOFTWARE,
     TEST_ADDRESS,
     TEST_BEDROCK_STATUS_RESPONSE,
     TEST_HOST,
@@ -27,6 +30,7 @@ from .const import (
     TEST_LEGACY_JAVA_STATUS_RESPONSE,
     TEST_PORT,
     TEST_QUERY_PORT,
+    TEST_QUERY_RESPONSE,
 )
 
 SERVER_EDITION_CASE_PARAM_NAMES = (
@@ -612,3 +616,57 @@ async def test_options_flow_fractional_query_port(
         CONF_QUERY_PORT: TEST_QUERY_PORT,
     }
     assert type(java_mock_config_entry.options[CONF_QUERY_PORT]) is int
+
+
+@pytest.mark.usefixtures("entity_registry_enabled_by_default")
+async def test_query_options_reload(
+    hass: HomeAssistant,
+    java_mock_config_entry: MockConfigEntry,
+    entity_registry: er.EntityRegistry,
+) -> None:
+    """Test enabling and disabling query sensors through the options flow."""
+    java_mock_config_entry.add_to_hass(hass)
+    with (
+        patch(
+            "homeassistant.components.minecraft_server.api.JavaServer.async_lookup",
+            return_value=JavaServer(host=TEST_HOST, port=TEST_PORT),
+        ),
+        patch(
+            "homeassistant.components.minecraft_server.api.JavaServer.async_status",
+            return_value=TEST_JAVA_STATUS_RESPONSE,
+        ),
+        patch(
+            "homeassistant.components.minecraft_server.api.JavaServer.async_query",
+            return_value=TEST_QUERY_RESPONSE,
+        ),
+    ):
+        assert await hass.config_entries.async_setup(java_mock_config_entry.entry_id)
+        await hass.async_block_till_done()
+        assert hass.states.get(ENTITY_ID_SOFTWARE) is None
+        assert hass.states.get(ENTITY_ID_MAP_NAME) is None
+
+        result = await hass.config_entries.options.async_init(
+            java_mock_config_entry.entry_id
+        )
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], user_input={CONF_ENABLE_QUERY: True}
+        )
+        assert result["type"] is FlowResultType.CREATE_ENTRY
+        await hass.async_block_till_done()
+        assert hass.states.get(ENTITY_ID_SOFTWARE).state == "Paper on 1.21.4"
+        assert hass.states.get(ENTITY_ID_MAP_NAME).state == "Dummy Query Map"
+
+        result = await hass.config_entries.options.async_init(
+            java_mock_config_entry.entry_id
+        )
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], user_input={CONF_ENABLE_QUERY: False}
+        )
+        assert result["type"] is FlowResultType.CREATE_ENTRY
+        await hass.async_block_till_done()
+
+    assert hass.states.get(ENTITY_ID_SOFTWARE).state == STATE_UNAVAILABLE
+    assert hass.states.get(ENTITY_ID_MAP_NAME) is None
+    assert entity_registry.async_get_entity_id(
+        Platform.SENSOR, DOMAIN, f"{java_mock_config_entry.entry_id}-software"
+    )

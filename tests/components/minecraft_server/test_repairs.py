@@ -21,7 +21,10 @@ from homeassistant.components.minecraft_server.const import (
     DOMAIN,
     ISSUE_QUERY_FAILED,
 )
-from homeassistant.components.repairs import DOMAIN as REPAIRS_DOMAIN
+from homeassistant.components.repairs import (
+    DOMAIN as REPAIRS_DOMAIN,
+    repairs_flow_manager,
+)
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_ADDRESS, CONF_TYPE
 from homeassistant.core import HomeAssistant
@@ -44,6 +47,41 @@ async def _refresh(hass: HomeAssistant, freezer: FrozenDateTimeFactory) -> None:
     freezer.tick(timedelta(minutes=1))
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
+
+
+@pytest.mark.parametrize(
+    "issue_data",
+    [
+        pytest.param(None, id="no-data"),
+        pytest.param({}, id="missing-entry-id"),
+        pytest.param({"entry_id": 123}, id="invalid-entry-id"),
+    ],
+)
+async def test_repair_with_invalid_issue_data(
+    hass: HomeAssistant,
+    issue_data: dict[str, str | int | float | None] | None,
+) -> None:
+    """Reject repair issues without a valid config entry ID."""
+    assert await async_setup_component(hass, REPAIRS_DOMAIN, {})
+    assert await async_setup_component(hass, DOMAIN, {})
+    issue_id = f"{ISSUE_QUERY_FAILED}_invalid"
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        issue_id,
+        data=issue_data,
+        is_fixable=True,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key=ISSUE_QUERY_FAILED,
+        translation_placeholders={"name": "Minecraft server"},
+    )
+
+    with pytest.raises(
+        ValueError, match=f"Missing config entry ID for repair {issue_id}"
+    ):
+        await repairs_flow_manager(hass).async_init(
+            DOMAIN, context={"issue_id": issue_id}
+        )
 
 
 @pytest.mark.parametrize(

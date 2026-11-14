@@ -14,6 +14,9 @@ TEST_HOST = "mc.dummyserver.com"
 TEST_PORT = 25566
 TEST_ADDRESS = f"{TEST_HOST}:{TEST_PORT}"
 
+ENTITY_ID_MAP_NAME = "sensor.mc_dummyserver_com_25566_map_name"
+ENTITY_ID_SOFTWARE = "sensor.mc_dummyserver_com_25566_software"
+
 TEST_JAVA_STATUS_RESPONSE = JavaStatusResponse.build(
     {
         "players": {

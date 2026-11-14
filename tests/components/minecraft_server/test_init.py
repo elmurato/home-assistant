@@ -7,7 +7,11 @@ import pytest
 from pytest_homeassistant.common import MockConfigEntry
 
 from homeassistant.components.binary_sensor import DOMAIN as BINARY_SENSOR_DOMAIN
-from homeassistant.components.minecraft_server.const import DOMAIN
+from homeassistant.components.minecraft_server.const import (
+    CONF_ENABLE_QUERY,
+    CONF_QUERY_PORT,
+    DOMAIN,
+)
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_ADDRESS, CONF_HOST, CONF_NAME, CONF_PORT
@@ -20,6 +24,7 @@ from .const import (
     TEST_HOST,
     TEST_JAVA_STATUS_RESPONSE,
     TEST_PORT,
+    TEST_QUERY_PORT,
 )
 
 DEFAULT_NAME = "Minecraft Server"
@@ -368,3 +373,30 @@ async def test_device_entry_type(
     )
     assert device is not None
     assert device.entry_type is dr.DeviceEntryType.SERVICE
+
+
+async def test_custom_query_port(
+    hass: HomeAssistant, java_mock_config_entry: MockConfigEntry
+) -> None:
+    """Test that the configured query port is used."""
+    java_mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        java_mock_config_entry,
+        options={CONF_ENABLE_QUERY: True, CONF_QUERY_PORT: TEST_QUERY_PORT},
+    )
+    server = JavaServer(host=TEST_HOST, port=TEST_PORT)
+
+    with (
+        patch(
+            "homeassistant.components.minecraft_server.api.JavaServer.async_lookup",
+            return_value=server,
+        ),
+        patch(
+            "homeassistant.components.minecraft_server.api.JavaServer.async_status",
+            return_value=TEST_JAVA_STATUS_RESPONSE,
+        ),
+    ):
+        assert await hass.config_entries.async_setup(java_mock_config_entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert server.query_port == TEST_QUERY_PORT

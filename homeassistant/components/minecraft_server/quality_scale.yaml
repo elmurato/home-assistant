@@ -46,9 +46,7 @@ rules:
     status: exempt
     comment: Integration doesn't provide any service actions.
   config-entry-unloading: done
-  docs-configuration-parameters:
-    status: exempt
-    comment: Integration doesn't support any configuration parameters.
+  docs-configuration-parameters: done
   docs-installation-parameters: done
   entity-unavailable:
     status: done
