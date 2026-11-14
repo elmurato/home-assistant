@@ -9,7 +9,11 @@ import pytest
 from pytest_homeassistant.common import MockConfigEntry
 
 from homeassistant.components.minecraft_server.api import MinecraftServerType
-from homeassistant.components.minecraft_server.const import CONF_QUERY_PORT, DOMAIN
+from homeassistant.components.minecraft_server.const import (
+    CONF_ENABLE_QUERY,
+    CONF_QUERY_PORT,
+    DOMAIN,
+)
 from homeassistant.config_entries import SOURCE_USER
 from homeassistant.const import CONF_ADDRESS, CONF_TYPE
 from homeassistant.core import HomeAssistant
@@ -454,94 +458,157 @@ async def test_reconfiguration_flow_address_lookup_error(
     assert java_mock_config_entry.data[CONF_TYPE] == server_type
 
 
-async def test_config_flow_query_port(hass: HomeAssistant) -> None:
-    """Test config entry creation with a custom query port."""
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": SOURCE_USER}
+async def test_options_flow(
+    hass: HomeAssistant, java_mock_config_entry: MockConfigEntry
+) -> None:
+    """Test the query protocol options flow."""
+    java_mock_config_entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(
+        java_mock_config_entry.entry_id
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "init"
+    assert result["data_schema"].schema[CONF_ENABLE_QUERY].config["read_only"] is False
+    assert result["data_schema"].schema[CONF_QUERY_PORT].config["read_only"] is False
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={CONF_ENABLE_QUERY: False, CONF_QUERY_PORT: TEST_QUERY_PORT},
     )
 
-    with (
-        patch(
-            "homeassistant.components.minecraft_server.api.JavaServer.async_lookup",
-            return_value=JavaServer(host=TEST_HOST, port=TEST_PORT),
-        ),
-        patch(
-            "homeassistant.components.minecraft_server.api.JavaServer.async_status",
-            return_value=TEST_JAVA_STATUS_RESPONSE,
-        ),
-    ):
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            user_input={
-                CONF_TYPE: MinecraftServerType.JAVA_EDITION,
-                CONF_ADDRESS: TEST_ADDRESS,
-                CONF_QUERY_PORT: TEST_QUERY_PORT,
-            },
-        )
-
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["data"] == {
-        CONF_ADDRESS: TEST_ADDRESS,
-        CONF_TYPE: MinecraftServerType.JAVA_EDITION,
+    assert java_mock_config_entry.options == {
+        CONF_ENABLE_QUERY: False,
         CONF_QUERY_PORT: TEST_QUERY_PORT,
     }
 
 
 @pytest.mark.parametrize(
-    ("initial_query_port", "new_input", "expected_data"),
+    "server_type",
     [
-        (
-            None,
-            {CONF_QUERY_PORT: TEST_QUERY_PORT},
-            {CONF_QUERY_PORT: TEST_QUERY_PORT},
-        ),
-        (TEST_QUERY_PORT, {}, {}),
+        pytest.param(MinecraftServerType.BEDROCK_EDITION, id="bedrock"),
+        pytest.param(MinecraftServerType.LEGACY_JAVA_EDITION, id="legacy_java"),
     ],
-    ids=["query_port_added", "query_port_removed"],
 )
-async def test_reconfiguration_flow_query_port(
-    hass: HomeAssistant,
-    java_mock_config_entry: MockConfigEntry,
-    initial_query_port: int | None,
-    new_input: dict[str, int],
-    expected_data: dict[str, int],
+async def test_options_flow_unsupported_edition(
+    hass: HomeAssistant, server_type: MinecraftServerType
 ) -> None:
-    """Test reconfiguration adds or removes the query port."""
+    """Test query options are read-only for unsupported server editions."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_ADDRESS: TEST_ADDRESS, CONF_TYPE: server_type},
+        options={CONF_ENABLE_QUERY: True, CONF_QUERY_PORT: TEST_QUERY_PORT},
+        version=3,
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["data_schema"].schema[CONF_ENABLE_QUERY].config["read_only"] is True
+    assert result["data_schema"].schema[CONF_QUERY_PORT].config["read_only"] is True
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options == {CONF_ENABLE_QUERY: True, CONF_QUERY_PORT: TEST_QUERY_PORT}
+
+
+@pytest.mark.parametrize(
+    "server_type",
+    [
+        pytest.param(MinecraftServerType.BEDROCK_EDITION, id="bedrock"),
+        pytest.param(MinecraftServerType.LEGACY_JAVA_EDITION, id="legacy_java"),
+    ],
+)
+async def test_options_flow_read_only_rejects_changes(
+    hass: HomeAssistant, server_type: MinecraftServerType
+) -> None:
+    """Test submitted values cannot change read-only query options."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_ADDRESS: TEST_ADDRESS, CONF_TYPE: server_type},
+        options={CONF_ENABLE_QUERY: True, CONF_QUERY_PORT: TEST_QUERY_PORT},
+        version=3,
+    )
+    entry.add_to_hass(hass)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={CONF_ENABLE_QUERY: False, CONF_QUERY_PORT: TEST_PORT},
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "query_not_supported"}
+    assert entry.options == {CONF_ENABLE_QUERY: True, CONF_QUERY_PORT: TEST_QUERY_PORT}
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options == {CONF_ENABLE_QUERY: True, CONF_QUERY_PORT: TEST_QUERY_PORT}
+
+
+async def test_options_flow_edition_changed(
+    hass: HomeAssistant, java_mock_config_entry: MockConfigEntry
+) -> None:
+    """Test options cannot be changed after switching to an unsupported edition."""
     java_mock_config_entry.add_to_hass(hass)
-    if initial_query_port is not None:
-        hass.config_entries.async_update_entry(
-            java_mock_config_entry,
-            data={
-                **java_mock_config_entry.data,
-                CONF_QUERY_PORT: initial_query_port,
-            },
-        )
+    result = await hass.config_entries.options.async_init(
+        java_mock_config_entry.entry_id
+    )
+    assert result["type"] is FlowResultType.FORM
 
-    result = await java_mock_config_entry.start_reconfigure_flow(hass)
+    hass.config_entries.async_update_entry(
+        java_mock_config_entry,
+        data={
+            **java_mock_config_entry.data,
+            CONF_TYPE: MinecraftServerType.BEDROCK_EDITION,
+        },
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={CONF_ENABLE_QUERY: True}
+    )
 
-    with (
-        patch(
-            "homeassistant.components.minecraft_server.api.JavaServer.async_lookup",
-            return_value=JavaServer(host=TEST_HOST, port=TEST_PORT),
-        ),
-        patch(
-            "homeassistant.components.minecraft_server.api.JavaServer.async_status",
-            return_value=TEST_JAVA_STATUS_RESPONSE,
-        ),
-    ):
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            user_input={
-                CONF_TYPE: MinecraftServerType.JAVA_EDITION,
-                CONF_ADDRESS: TEST_ADDRESS,
-                **new_input,
-            },
-        )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "query_not_supported"}
+    assert result["data_schema"].schema[CONF_ENABLE_QUERY].config["read_only"] is True
+    assert java_mock_config_entry.options == {}
 
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "reconfigure_successful"
-    assert java_mock_config_entry.data == {
-        CONF_ADDRESS: TEST_ADDRESS,
-        CONF_TYPE: MinecraftServerType.JAVA_EDITION,
-        **expected_data,
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert java_mock_config_entry.options == {}
+
+
+async def test_options_flow_fractional_query_port(
+    hass: HomeAssistant, java_mock_config_entry: MockConfigEntry
+) -> None:
+    """Test that the query port must be an integer."""
+    java_mock_config_entry.add_to_hass(hass)
+    result = await hass.config_entries.options.async_init(
+        java_mock_config_entry.entry_id
+    )
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={CONF_ENABLE_QUERY: True, CONF_QUERY_PORT: 25565.5},
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {CONF_QUERY_PORT: "invalid_query_port"}
+    assert java_mock_config_entry.options == {}
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={CONF_ENABLE_QUERY: True, CONF_QUERY_PORT: TEST_QUERY_PORT},
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert java_mock_config_entry.options == {
+        CONF_ENABLE_QUERY: True,
+        CONF_QUERY_PORT: TEST_QUERY_PORT,
     }
+    assert type(java_mock_config_entry.options[CONF_QUERY_PORT]) is int

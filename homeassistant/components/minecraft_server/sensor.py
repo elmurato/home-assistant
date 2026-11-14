@@ -16,7 +16,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.typing import StateType
 
 from .api import MinecraftServerData, MinecraftServerType
-from .const import DOMAIN, KEY_LATENCY, KEY_MOTD
+from .const import CONF_ENABLE_QUERY, DOMAIN, KEY_LATENCY, KEY_MOTD
 from .coordinator import MinecraftServerConfigEntry, MinecraftServerCoordinator
 from .entity import MinecraftServerEntity
 
@@ -217,43 +217,29 @@ async def async_setup_entry(
     server_type = config_entry.data.get(CONF_TYPE, MinecraftServerType.JAVA_EDITION)
     entity_registry = er.async_get(hass)
     entities = []
-    pending_query_descriptions = []
+    query_enabled = config_entry.options.get(CONF_ENABLE_QUERY, False)
+    supported_keys = {
+        description.key
+        for description in SENSOR_DESCRIPTIONS
+        if server_type in description.supported_server_types
+        and (not description.requires_query or query_enabled)
+    }
 
     for description in SENSOR_DESCRIPTIONS:
         if server_type not in description.supported_server_types:
+            if description.key in supported_keys:
+                continue
             # Remove existing stale entity (e.g. after server type change)
             if entity_id := entity_registry.async_get_entity_id(
                 Platform.SENSOR, DOMAIN, f"{config_entry.entry_id}-{description.key}"
             ):
                 entity_registry.async_remove(entity_id)
-        elif description.requires_query:
-            pending_query_descriptions.append(description)
-        else:
+        elif not description.requires_query or query_enabled:
             entities.append(
                 MinecraftServerSensorEntity(coordinator, description, config_entry)
             )
 
     async_add_entities(entities)
-
-    if not pending_query_descriptions:
-        return
-
-    @callback
-    def _async_add_query_entities() -> None:
-        """Add sensors based on the query protocol as soon as it is available."""
-        if not coordinator.data.query_available:
-            return
-
-        async_add_entities(
-            MinecraftServerSensorEntity(coordinator, description, config_entry)
-            for description in pending_query_descriptions
-        )
-        pending_query_descriptions.clear()
-        remove_listener()
-
-    remove_listener = coordinator.async_add_listener(_async_add_query_entities)
-    config_entry.async_on_unload(remove_listener)
-    _async_add_query_entities()
 
 
 class MinecraftServerSensorEntity(MinecraftServerEntity, SensorEntity):

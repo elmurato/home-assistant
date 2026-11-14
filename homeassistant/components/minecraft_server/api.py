@@ -22,14 +22,13 @@ LOOKUP_TIMEOUT: float = 10
 DATA_UPDATE_TIMEOUT: float = 10
 DATA_UPDATE_RETRIES: int = 3
 QUERY_TIMEOUT: float = 3
-QUERY_RETRY_INTERVAL: int = 10
 
 
 @dataclass
 class MinecraftServerData:
     """Representation of Minecraft Server data."""
 
-    # Common data
+    # Common data available for all server types
     latency: float
     motd: str
     players_max: int
@@ -37,19 +36,14 @@ class MinecraftServerData:
     protocol_version: int
     version: str
 
-    # Data available only in 'Java Edition'
-    players_list: list[str] | None = None
-
-    # Data available only in 'Java Edition' with enabled query protocol
-    query_available: bool = False
-    software_brand: str | None = None
-    software_version: str | None = None
-    plugins: list[str] | None = None
-
-    # Data available only in 'Bedrock Edition'
+    # Server type specific data
     edition: str | None = None
     game_mode: str | None = None
     map_name: str | None = None
+    players_list: list[str] | None = None
+    plugins: list[str] | None = None
+    software_brand: str | None = None
+    software_version: str | None = None
 
 
 class MinecraftServerType(StrEnum):
@@ -82,16 +76,17 @@ class MinecraftServer:
         hass: HomeAssistant,
         server_type: MinecraftServerType,
         address: str,
+        query_enabled: bool = False,
         query_port: int | None = None,
     ) -> None:
         """Initialize server instance."""
         self._server = None
-        self._query_port = query_port
-        self._query_ever_succeeded = False
-        self._query_skip_count = 0
         self._hass = hass
         self._server_type = server_type
         self._address = address
+        self._query_enabled = query_enabled
+        self._query_port = query_port
+        self.query_failed: bool | None = None
 
     async def async_initialize(self) -> None:
         """Perform async initialization of server instance."""
@@ -142,6 +137,7 @@ class MinecraftServer:
         status_response: (
             BedrockStatusResponse | JavaStatusResponse | LegacyStatusResponse
         )
+        query_response: QueryResponse | None = None
 
         if self._server is None:
             raise MinecraftServerNotInitializedError(
@@ -156,10 +152,24 @@ class MinecraftServer:
                 f"{self._get_error_message(error)}"
             ) from error
 
+        if self._query_enabled and isinstance(self._server, JavaServer):
+            try:
+                async with asyncio.timeout(QUERY_TIMEOUT):
+                    query_response = await self._server.async_query(
+                        tries=DATA_UPDATE_RETRIES
+                    )
+            except (OSError, ValueError, KeyError) as error:
+                self.query_failed = True
+                _LOGGER.debug(
+                    "Query request to '%s' failed: %s",
+                    self._address,
+                    self._get_error_message(error),
+                )
+            else:
+                self.query_failed = False
+
         if isinstance(status_response, JavaStatusResponse):
-            data = self._extract_java_data(status_response)
-            if isinstance(self._server, JavaServer):
-                await self._async_add_query_data(self._server, data)
+            data = self._extract_java_data(status_response, query_response)
         elif isinstance(status_response, BedrockStatusResponse):
             data = self._extract_bedrock_data(status_response)
         else:
@@ -168,16 +178,18 @@ class MinecraftServer:
         return data
 
     def _extract_java_data(
-        self, status_response: JavaStatusResponse
+        self,
+        status_response: JavaStatusResponse,
+        query_response: QueryResponse | None,
     ) -> MinecraftServerData:
-        """Extract Java Edition server data out of status response."""
+        """Extract Java Edition server data from status and query responses."""
         players_list: list[str] = []
 
         if players := status_response.players.sample:
             players_list.extend(player.name for player in players)
             players_list.sort()
 
-        return MinecraftServerData(
+        data = MinecraftServerData(
             latency=status_response.latency,
             motd=status_response.motd.to_plain(),
             players_max=status_response.players.max,
@@ -187,41 +199,14 @@ class MinecraftServer:
             players_list=players_list,
         )
 
-    async def _async_add_query_data(
-        self, server: JavaServer, data: MinecraftServerData
-    ) -> None:
-        """Add data of the query protocol to the data, if the server supports it."""
-        # Servers without query support are probed only occasionally.
-        if not self._query_ever_succeeded:
-            if self._query_skip_count > 0:
-                self._query_skip_count -= 1
-                return
-            self._query_skip_count = QUERY_RETRY_INTERVAL - 1
+        if query_response is not None:
+            data.map_name = query_response.map_name
+            data.players_list = sorted(query_response.players.list)
+            data.software_brand = query_response.software.brand
+            data.software_version = query_response.software.version
+            data.plugins = query_response.software.plugins
 
-        try:
-            async with asyncio.timeout(QUERY_TIMEOUT):
-                query_response = await server.async_query(tries=1)
-        except (OSError, ValueError, KeyError) as error:
-            _LOGGER.debug(
-                "Query request to '%s' failed: %s",
-                self._address,
-                self._get_error_message(error),
-            )
-            return
-
-        self._query_ever_succeeded = True
-        self._apply_query_response(data, query_response)
-
-    def _apply_query_response(
-        self, data: MinecraftServerData, query_response: QueryResponse
-    ) -> None:
-        """Apply query response to the server data."""
-        data.query_available = True
-        data.map_name = query_response.map_name
-        data.players_list = sorted(query_response.players.list)
-        data.software_brand = query_response.software.brand
-        data.software_version = query_response.software.version
-        data.plugins = query_response.software.plugins
+        return data
 
     def _extract_bedrock_data(
         self, status_response: BedrockStatusResponse

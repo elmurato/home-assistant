@@ -6,28 +6,37 @@ from typing import Any, override
 
 import probatio
 
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import (
+    ConfigFlow,
+    ConfigFlowResult,
+    OptionsFlowWithReload,
+)
 from homeassistant.const import CONF_ADDRESS, CONF_TYPE
+from homeassistant.core import callback
+from homeassistant.helpers import selector
 
 from .api import MinecraftServer, MinecraftServerAddressError, MinecraftServerType
-from .const import CONF_QUERY_PORT, DOMAIN
+from .const import CONF_ENABLE_QUERY, CONF_QUERY_PORT, DOMAIN
+from .coordinator import MinecraftServerConfigEntry
 
 DEFAULT_ADDRESS = "localhost:25565"
 
 _LOGGER = logging.getLogger(__name__)
 
 
-def _get_query_port_data(user_input: dict[str, Any]) -> dict[str, int]:
-    """Return the optional query port of the user input as config entry data."""
-    if (query_port := user_input.get(CONF_QUERY_PORT)) is None:
-        return {}
-    return {CONF_QUERY_PORT: query_port}
-
-
 class MinecraftServerConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Minecraft Server."""
 
     VERSION = 3
+
+    @staticmethod
+    @callback
+    @override
+    def async_get_options_flow(
+        config_entry: MinecraftServerConfigEntry,
+    ) -> MinecraftServerOptionsFlow:
+        """Get the options flow for this handler."""
+        return MinecraftServerOptionsFlow()
 
     @override
     async def async_step_user(
@@ -45,7 +54,6 @@ class MinecraftServerConfigFlow(ConfigFlow, domain=DOMAIN):
                     data={
                         CONF_ADDRESS: user_input[CONF_ADDRESS],
                         CONF_TYPE: user_input[CONF_TYPE],
-                        **_get_query_port_data(user_input),
                     },
                 )
 
@@ -68,7 +76,6 @@ class MinecraftServerConfigFlow(ConfigFlow, domain=DOMAIN):
                     data={
                         CONF_ADDRESS: user_input[CONF_ADDRESS],
                         CONF_TYPE: user_input[CONF_TYPE],
-                        **_get_query_port_data(user_input),
                     },
                 )
 
@@ -86,9 +93,7 @@ class MinecraftServerConfigFlow(ConfigFlow, domain=DOMAIN):
         server_address = user_input[CONF_ADDRESS]
 
         self._async_abort_entries_match({CONF_ADDRESS: server_address})
-        api = MinecraftServer(
-            self.hass, server_type, server_address, user_input.get(CONF_QUERY_PORT)
-        )
+        api = MinecraftServer(self.hass, server_type, server_address)
 
         try:
             await api.async_initialize()
@@ -137,17 +142,80 @@ class MinecraftServerConfigFlow(ConfigFlow, domain=DOMAIN):
                             CONF_ADDRESS, defaults.get(CONF_ADDRESS, DEFAULT_ADDRESS)
                         ),
                     ): probatio.All(str, probatio.Lower),
-                    probatio.Optional(
-                        CONF_QUERY_PORT,
-                        description={
-                            "suggested_value": user_input.get(
-                                CONF_QUERY_PORT, defaults.get(CONF_QUERY_PORT)
-                            )
-                        },
-                    ): probatio.All(
-                        probatio.Coerce(int), probatio.Range(min=1, max=65535)
-                    ),
                 }
             ),
             errors=errors,
+        )
+
+
+class MinecraftServerOptionsFlow(OptionsFlowWithReload):
+    """Handle options for Minecraft Server."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Manage the options."""
+        read_only = (
+            self.config_entry.data.get(CONF_TYPE, MinecraftServerType.JAVA_EDITION)
+            != MinecraftServerType.JAVA_EDITION
+        )
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            if read_only:
+                options = self.config_entry.options
+                if any(
+                    key in user_input and user_input[key] != options.get(key, default)
+                    for key, default in (
+                        (CONF_ENABLE_QUERY, False),
+                        (CONF_QUERY_PORT, None),
+                    )
+                ):
+                    errors["base"] = "query_not_supported"
+                else:
+                    return self.async_create_entry(title="", data=dict(options))
+            elif (
+                CONF_QUERY_PORT in user_input
+                and not user_input[CONF_QUERY_PORT].is_integer()
+            ):
+                errors[CONF_QUERY_PORT] = "invalid_query_port"
+            else:
+                if CONF_QUERY_PORT in user_input:
+                    user_input[CONF_QUERY_PORT] = int(user_input[CONF_QUERY_PORT])
+                return self.async_create_entry(title="", data=user_input)
+
+        return self.async_show_form(
+            step_id="init",
+            errors=errors,
+            data_schema=probatio.Schema(
+                {
+                    (probatio.Optional if read_only else probatio.Required)(
+                        CONF_ENABLE_QUERY,
+                        description={
+                            "suggested_value": self.config_entry.options.get(
+                                CONF_ENABLE_QUERY, False
+                            )
+                        },
+                    ): selector.BooleanSelector(
+                        selector.BooleanSelectorConfig(read_only=read_only)
+                    ),
+                    probatio.Optional(
+                        CONF_QUERY_PORT,
+                        description={
+                            "suggested_value": self.config_entry.options.get(
+                                CONF_QUERY_PORT,
+                                self.config_entry.data.get(CONF_QUERY_PORT),
+                            )
+                        },
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=1,
+                            max=65535,
+                            step=1,
+                            mode=selector.NumberSelectorMode.BOX,
+                            read_only=read_only,
+                        )
+                    ),
+                }
+            ),
         )

@@ -10,12 +10,10 @@
       "reconfigure": {
         "data": {
           "address": "[%key:component::minecraft_server::config::step::user::data::address%]",
-          "query_port": "[%key:component::minecraft_server::config::step::user::data::query_port%]",
           "type": "[%key:component::minecraft_server::config::step::user::data::type%]"
         },
         "data_description": {
           "address": "[%key:component::minecraft_server::config::step::user::data_description::address%]",
-          "query_port": "[%key:component::minecraft_server::config::step::user::data_description::query_port%]",
           "type": "[%key:component::minecraft_server::config::step::user::data_description::type%]"
         },
         "description": "Update the configuration for your Minecraft server."
@@ -23,12 +21,10 @@
       "user": {
         "data": {
           "address": "Server address",
-          "query_port": "Query port",
           "type": "Server edition"
         },
         "data_description": {
           "address": "The hostname, IP address or SRV record of your Minecraft server, optionally including the port.",
-          "query_port": "Only for Java Edition. The UDP port of the query protocol, if it differs from the server port. The query protocol is detected automatically and provides additional data. It requires 'enable-query=true' in the server.properties.",
           "type": "For Java Edition beta version 1.8 till release version 1.6.4, select 'Legacy Java Edition'.\nFor Java Edition release version 1.7+, select 'Java Edition'.\nFor all Bedrock Edition versions, select 'Bedrock Edition'."
         },
         "description": "Set up your Minecraft Server instance to allow monitoring.\n\nSelect the server edition and server address.",
@@ -81,6 +77,40 @@
     },
     "data_update_failed": {
       "message": "A connection error occurred while updating the data for the Minecraft server {address}."
+    }
+  },
+  "issues": {
+    "query_failed": {
+      "fix_flow": {
+        "error": {
+          "reload_failed": "Query was disabled, but the integration could not be reloaded. Check the integration and try again."
+        },
+        "step": {
+          "confirm": {
+            "description": "Home Assistant can reach the server, but query requests have failed three times in a row. Query-backed sensors may be unavailable.\n\n1. Check that `enable-query=true` is set in the server's `server.properties`, then restart the server if you changed it.\n2. Check that the query port in the integration options matches the server's `query.port` and that UDP traffic can reach it.\n\nHome Assistant will retry automatically and clear this issue when query succeeds. Alternatively, select **Submit** to disable query in the integration options.",
+            "title": "Disable Minecraft server query"
+          }
+        }
+      },
+      "title": "Minecraft server query failed for {name}"
+    }
+  },
+  "options": {
+    "error": {
+      "invalid_query_port": "The query port must be a whole number.",
+      "query_not_supported": "Query options are only available for Java Edition servers."
+    },
+    "step": {
+      "init": {
+        "data": {
+          "enable_query": "Enable query protocol",
+          "query_port": "Query port"
+        },
+        "data_description": {
+          "enable_query": "Only for Java Edition. The query protocol provides additional server data and requires 'enable-query=true' in server.properties.",
+          "query_port": "The UDP port of the query protocol, if it differs from the server port."
+        }
+      }
     }
   }
 }
